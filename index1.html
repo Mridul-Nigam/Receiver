@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PeerB (Receiver)</title>
+    <link rel="stylesheet" href="peerB.css">
+</head>
+<body>
+    <div class="container">
+        <h1>PeerB (Receiver)</h1>
+        <textarea id="receivedData" readonly></textarea>
+        <button id="connect-btn" onclick="initializePeerConnection()">Initialize Peer Connection</button>
+        <div class="message">
+        </div>
+    </div>
+    <p id="result">Result: </p>
+
+    <script>
+        let peerConnection;
+        let receivedDataElement;
+        let signalingServer;
+
+        async function initializeSignalingServer() {
+            signalingServer = new WebSocket('ws://localhost:8080');
+            signalingServer.addEventListener('open', () => {
+                console.log('Connected to signaling server');
+            });
+
+            signalingServer.addEventListener('message', async (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+
+                    if (message.type === 'offer') {
+                        console.log('Received offer:', message.data);
+
+                        if (peerConnection.signalingState === 'stable') {
+                            // Setting the remote description with the received offer
+                            await peerConnection.setRemoteDescription(new RTCSessionDescription(message.data));
+
+                            // Creating an answer
+                            const answer = await peerConnection.createAnswer();
+                            await peerConnection.setLocalDescription(answer);
+
+                            // Sending the answer back to peerA through the signaling server
+                            signalingServer.send(JSON.stringify({ type: 'answer', data: answer }));
+                            console.log('Sent answer');
+                        } else {
+                            console.warn('Unexpected signaling state:', peerConnection.signalingState);
+                        }
+                    } else if (message.type === 'answer') {
+                        console.log('Received answer from signaling server:', message.data);
+
+                        // Setting the remote description with the received answer
+                        await peerConnection.setRemoteDescription(new RTCSessionDescription(message.data));
+
+                        console.log('ICE connection state:', peerConnection.iceConnectionState);
+                    } else if (message.type === 'ice-candidate') {
+                        console.log('Received ice candidate:', message.data);
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(message.data));
+                    }
+                } catch (error) {
+                    console.error('Error handling signaling message:', error);
+                }
+            });
+
+            signalingServer.addEventListener('close', () => {
+                console.log('Connection to signaling server closed');
+            });
+        }
+
+        async function initializePeerConnection() {
+            try {
+                const configuration = {
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' } // Using Google's public STUN server
+                    ]
+                };
+                peerConnection = new RTCPeerConnection(configuration);
+
+                peerConnection.ondatachannel = (event) => {
+                    const dataChannel = event.channel;
+
+                    dataChannel.onopen = () => {
+                        console.log('Data channel opened');
+                    };
+
+                    dataChannel.onmessage = (event) => {
+                        console.log('Received message:', event.data);
+                        handleMessageReceived(event.data);
+                    };
+
+                    dataChannel.onclose = () => {
+                        console.log('Data channel closed');
+                    };
+
+                    dataChannel.onerror = (error) => {
+                        console.error('Data channel error:', error);
+                    };
+                };
+
+                // Listening for incoming ICE candidates from the other peer
+                peerConnection.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        // Sending the ICE candidate to the other peer via the signaling server
+                        signalingServer.send(JSON.stringify({ type: 'ice-candidate', data: event.candidate }));
+                    }
+                };
+
+                // Initializing signaling server
+                await initializeSignalingServer();
+
+            } catch (error) {
+                console.error('Error initializing peer connection:', error);
+            }
+        }
+
+        function sendPostRequest(url = '', data = {}) {
+            fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(data)
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
+        }
+
+        function handleMessageReceived(message) {
+            receivedDataElement = receivedDataElement || document.getElementById('receivedData');
+            receivedDataElement.value = message + '\n';
+            const messageData = message;
+
+            const serverUrl = 'http://localhost:8082/receive_data'; // Replace with your server endpoint
+
+            // Send POST request without waiting for the response
+            sendPostRequest(serverUrl, messageData);
+        }
+
+    </script>
+</body>
+</html>
