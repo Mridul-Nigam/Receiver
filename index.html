@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PeerB (Receiver)</title>
+    <link rel="stylesheet" href="peerB.css">
+</head>
+<body>
+    <div class="container">
+        <h1>PeerB (Receiver)</h1>
+        <textarea id="receivedData" readonly></textarea>
+        <button id="connect-btn" onclick="initializePeerConnection()">Initialize Peer Connection</button>
+        <div class="message">
+        </div>
+    </div>
+    <p id="result">Result: </p>
+
+    <script>
+        let peerConnection;
+        let receivedDataElement;
+        let signalingServer;
+
+
+        async function initializeSignalingServer() {
+            signalingServer = new WebSocket('ws://localhost:8080');
+            signalingServer.addEventListener('open', () => {
+            console.log('Connected to signaling server');
+            });
+
+            signalingServer.addEventListener('message', async (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+
+                    if (message.type === 'offer') {
+                        console.log('Received offer:', message.data);
+
+                        // Check signalingState before setting local description
+                        if (peerConnection.signalingState === 'stable') {
+                            // Set the remote description with the received offer
+                            await peerConnection.setRemoteDescription(new RTCSessionDescription(message.data));
+
+                            // Create an answer
+                            const answer = await peerConnection.createAnswer();
+                            await peerConnection.setLocalDescription(answer);
+
+                            // Send the answer back to peerA through the signaling server
+                            signalingServer.send(JSON.stringify({ type: 'answer', data: answer }));
+                            console.log('Sent answer');
+                        } else {
+                            console.warn('Unexpected signaling state:', peerConnection.signalingState);
+                        }
+                    } else if (message.type === 'answer') {
+                        console.log('Received answer from signaling server:', message.data);
+
+                        // Set the remote description with the received answer
+                        await peerConnection.setRemoteDescription(new RTCSessionDescription(message.data));
+
+                        console.log('ICE connection state:', peerConnection.iceConnectionState);
+                    } else if (message.type === 'ice-candidate') {
+                        //if (peerConnection.remoteDescription) { // Check if remote description is set
+                            // Add the received ICE candidate to the RTCPeerConnection
+                        console.log("received ice candidates")
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(message.data));
+                        console.log('ICE connection state:', peerConnection.iceConnectionState);
+                        //} else {
+                         //   console.warn('Received ICE candidate before setting remote description.');
+                       // }
+                    }
+                } catch (error) {
+                    console.error('Error handling signaling message:', error);
+                }
+            });
+
+            signalingServer.addEventListener('close', () => {
+                console.log('Connection to signaling server closed');
+            });
+        }
+
+        async function initializePeerConnection() {
+            try {
+                // Initialize RTCPeerConnection
+                peerConnection = new RTCPeerConnection();
+
+                // Set up event listeners for the data channel
+                peerConnection.ondatachannel = (event) => {
+                    const dataChannel = event.channel;
+
+                    dataChannel.onopen = () => {
+                        console.log('Data channel opened');
+                        // Now you can start receiving data
+                    };
+
+                    dataChannel.onmessage = (event) => {
+                        console.log('Received message:', event.data);
+                        //updateReceivedData(event.data);
+                        handleMessageReceived(event.data);
+                    };
+
+                    dataChannel.onclose = () => {
+                        console.log('Data channel closed');
+                    };
+
+                    dataChannel.onerror = (error) => {
+                        console.error('Data channel error:', error);
+                    };
+                };
+
+                // Listen for incoming ICE candidates from the other peer
+                peerConnection.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        // Send the ICE candidate to the other peer via the signaling server
+                        signalingServer.send(JSON.stringify({ type: 'ice-candidate', data: event.candidate }));
+                    }
+                };
+
+                // Listen for offers from the signaling server
+                await initializeSignalingServer();
+
+            } catch (error) {
+                console.error('Error initializing peer connection:', error);
+            }
+        }
+//--    ---------------------------------------------------------------------------------------
+        function sendPostRequest(url = '', data = {}) {
+            fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                    
+                },
+                body: JSON.stringify(data)
+            })
+                /*.then(response => {
+                    // Optionally handle the response if needed
+                    console.log('Server response status:', response.status);
+                })*/
+                .catch(error => {
+                    console.error('Error:', error);
+                });
+        }
+
+        function handleMessageReceived(message) {
+            // Assuming message is already in JSON format
+            receivedDataElement = receivedDataElement || document.getElementById('receivedData');
+            receivedDataElement.value = message + '\n';
+            const messageData = message;
+
+            const serverUrl = 'http://localhost:8082/receive_data'; // Replace with your server endpoint
+
+            // Send POST request without waiting for the response
+            sendPostRequest(serverUrl, messageData);
+        }
+//-     ------------------------------------------------------------------------------------------
+
+/*        function updateReceivedData(data) {
+            receivedDataElement = receivedDataElement || document.getElementById('receivedData');
+            receivedDataElement.value = data + '\n';
+            var input1 = document.getElementById("receivedData").value;
+            console.log(input1);
+            // Send inputs to the server and get the result
+            fetch(`/compute?input1=${input1}`)
+                *//*.then(response => response.text())
+                .then(result => {
+                    // Display the result on the webpage
+                    document.getElementById("result").innerText = "Result: " + result;
+                })*//*
+                .catch(error => console.error('Error:', error));
+        }*/
+
+    </script>
+</body>
+</html>
+
+<!--<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Compute Page</title>
+</head>
+<body>
+    <h1>Compute Page</h1>
+
+    <label for="input1">Enter the first integer:</label>
+    <input type="text" id="input1" />
+
+    <label for="input2">Enter the second integer:</label>
+    <input type="text" id="input2" />
+
+    <button onclick="compute()">Compute</button>
+
+    <p id="result">Result: </p>
+
+    <script>
+        function compute() {
+            // Get input values
+            var input1 = document.getElementById("input1").value;
+            var input2 = document.getElementById("input2").value;
+
+            // Send inputs to the server and get the result
+            fetch(`/compute?input1=${input1}&input2=${input2}`)
+                .then(response => response.text())
+                .then(result => {
+                    // Display the result on the webpage
+                    document.getElementById("result").innerText = "Result: " + result;
+                })
+                .catch(error => console.error('Error:', error));
+        }
+    </script>
+</body>
+</html>
+-->
